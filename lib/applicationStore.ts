@@ -3,10 +3,23 @@ import path from 'path'
 import fs from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 
-function getSessionPath(sessionId: string): string {
+function getSessionDir(): string {
+  // Vercel serverless: only /tmp is writable at runtime
+  // Local dev: use project data/sessions directory
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    const dir = '/tmp/sessions'
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    return dir
+  }
   const dir = path.join(process.cwd(), 'data', 'sessions')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  return path.join(dir, `${sessionId}.json`)
+  return dir
+}
+
+function getSessionPath(sessionId: string): string {
+  // Sanitize sessionId to prevent path traversal
+  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+  return path.join(getSessionDir(), `${safe}.json`)
 }
 
 export function getApplications(sessionId: string): Application[] {

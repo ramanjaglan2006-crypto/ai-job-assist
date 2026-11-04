@@ -96,16 +96,64 @@ function extractBasicData(text: string): Record<string, any> {
     'next.js', 'vue', 'angular', 'express', 'django', 'flask', 'spring', 'graphql', 'rest']
   const foundSkills = skillKeywords.filter(skill => text.toLowerCase().includes(skill))
 
+  // --- Education extraction ---
+  const education: string[] = []
+  // Look for Education section header and grab lines after it
+  const eduSectionMatch = text.match(
+    /(?:education|academic|qualification)[s]?\s*[\n:]([\s\S]*?)(?=\n\s*(?:experience|skills|projects?|work|employment|certifi|achievement|extra|activity|interest|reference|$))/i
+  )
+  if (eduSectionMatch) {
+    const eduLines = eduSectionMatch[1]
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 3 && !/^[-•*|]+$/.test(l))
+    education.push(...eduLines.slice(0, 5))
+  }
+  // Also sweep entire text for degree keywords in case section not found
+  if (education.length === 0) {
+    const degreeRegex = /(?:b\.?\s*tech|b\.?\s*e\.?|m\.?\s*tech|b\.?\s*sc|m\.?\s*sc|mba|ph\.?\s*d|bachelor|master|diploma|b\.?\s*com|b\.?\s*ca|12th|10th|hsc|ssc)[^\n]*/gi
+    const degreeMatches = text.match(degreeRegex)
+    if (degreeMatches) education.push(...degreeMatches.slice(0, 3).map(s => s.trim()))
+  }
+
+  // --- Projects extraction ---
+  const projects: string[] = []
+  const projSectionMatch = text.match(
+    /(?:projects?|personal projects?|academic projects?|work done)[s]?\s*[\n:]([\s\S]*?)(?=\n\s*(?:education|academic|skills|experience|work|employment|certifi|achievement|extra|activity|interest|reference|$))/i
+  )
+  if (projSectionMatch) {
+    const projLines = projSectionMatch[1]
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 5 && !/^[-•*|]+$/.test(l))
+    // Group into project entries — take up to 4 lines
+    projects.push(...projLines.slice(0, 4))
+  }
+
+  // --- Experience years ---
+  let experienceYears = 0
+  const expYearsMatch = text.match(/(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|exp)/i)
+  if (expYearsMatch) experienceYears = parseInt(expYearsMatch[1])
+
+  // --- Designation ---
+  const titleKeywords = ['software engineer', 'software developer', 'frontend', 'backend', 'full stack',
+    'fullstack', 'web developer', 'data scientist', 'ml engineer', 'devops', 'cloud engineer',
+    'mobile developer', 'react developer', 'node developer', 'python developer']
+  const lowerText = text.toLowerCase()
+  const detectedTitle = titleKeywords.find(t => lowerText.includes(t))
+
   return {
     name,
     email: emailMatch?.[0] || null,
     phone: phoneMatch?.[0]?.trim() || null,
-    designation: 'Software Developer',
+    designation: detectedTitle
+      ? detectedTitle.replace(/\b\w/g, c => c.toUpperCase())
+      : 'Software Developer',
     skills: foundSkills.length ? foundSkills : ['JavaScript', 'React', 'Node.js'],
-    experience: '0-2 years',
-    experienceYears: 1,
-    education: [],
-    projects: [],
+    experience: experienceYears > 0 ? `${experienceYears} years` : '0-2 years',
+    experienceYears,
+    education,
+    projects,
     summary: `Candidate with skills in ${foundSkills.slice(0, 3).join(', ')}.`,
   }
 }
