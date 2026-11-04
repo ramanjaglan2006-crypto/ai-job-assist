@@ -55,22 +55,27 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
 
   // === APPLY INTENT ===
   if (intent === 'apply_job') {
-    const jobIdMatch = message.match(/(?:job[:\s]+)?([A-Z0-9_-]{3,})\s*(?:\((.+?)\))?/i)
-    const jobId = jobIdMatch?.[1]
-    const jobTitleHint = jobIdMatch?.[2] || 'Unknown Job'
+    // Extract job ID: look for patterns like JOB1A2B3C4D or similar uppercase+digit codes
+    // Also handle "apply to [job title]" by searching by title
+    const jobIdMatch = message.match(/\b(JOB[A-Z0-9]{4,})\b/i)
+    const jobId = jobIdMatch?.[1]?.toUpperCase()
 
-    if (!jobId) {
-      return {
-        reply: "I couldn't identify which job you want to apply to. Please mention the job title or ID, for example: *Apply me to the React Developer role at Google*."
-      }
-    }
+    // Try to extract job title from parentheses or after "apply to"
+    const titleFromParens = message.match(/\(([^)]+)\)/)?.[1]
+    const titleFromText = message.replace(/apply\s+(me\s+to|to)\s+/i, '').replace(/job[:\s]+\S+/i, '').trim()
 
     const jobs = loadJobs()
-    const job = jobs.find(j => j.id === jobId || j.id.toLowerCase() === jobId.toLowerCase())
+    let job = jobId ? jobs.find(j => j.id.toUpperCase() === jobId) : null
+
+    // Fallback: search by title if no ID found or no job found by ID
+    if (!job && (titleFromParens || titleFromText)) {
+      const searchTitle = (titleFromParens || titleFromText).toLowerCase()
+      job = jobs.find(j => j.title.toLowerCase().includes(searchTitle.slice(0, 20)))
+    }
 
     if (!job) {
       return {
-        reply: `I couldn't find a job with ID \`${jobId}\`. Please check the job ID from your recommendations.`
+        reply: "I couldn't identify which job you want to apply to. Please click the **Apply (Record)** button on a job card, or type the job title clearly, e.g.: *Apply me to Frontend Engineer at Google*."
       }
     }
 
