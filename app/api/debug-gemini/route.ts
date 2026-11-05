@@ -16,14 +16,27 @@ export async function GET() {
   try {
     const { GoogleGenAI } = await import('@google/genai')
     const ai = new GoogleGenAI({ apiKey: key })
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: [{ role: 'user', parts: [{ text: 'Reply with exactly the word: WORKING' }] }],
-    })
-    const text = response.text?.trim() || ''
+    const models = ['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash']
+    let text = ''
+    let usedModel = ''
+    for (const model of models) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: 'Reply with exactly the word: WORKING' }] }],
+        })
+        text = response.text?.trim() || ''
+        usedModel = model
+        if (text) break
+      } catch (e: any) {
+        if (e?.message?.includes('not found') || e?.message?.includes('404') || e?.message?.includes('no longer available')) continue
+        throw e
+      }
+    }
     return NextResponse.json({
       status: 'ok',
       keyPrefix: prefix,
+      modelUsed: usedModel,
       geminiResponse: text,
       geminiActive: text.includes('WORKING'),
     })
@@ -35,3 +48,4 @@ export async function GET() {
     })
   }
 }
+

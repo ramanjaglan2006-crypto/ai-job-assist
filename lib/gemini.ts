@@ -7,8 +7,10 @@ import { GoogleGenAI } from '@google/genai'
 
 const API_KEY = process.env.GEMINI_API_KEY || ''
 
-// Supported models in priority order
-const MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+// Supported models in priority order (newest first)
+// The app automatically tries each in sequence, skipping unavailable/deprecated ones.
+// Error messages from the API may hint the correct model (e.g. "use gemini-3.8-flash").
+const MODELS = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-pro']
 
 let _client: GoogleGenAI | null = null
 
@@ -37,12 +39,22 @@ export async function generateText(prompt: string, systemPrompt?: string): Promi
       const text = response.text ?? ''
       if (text) return text
     } catch (err: any) {
-      const msg = String(err?.message || '')
-      // If quota / model not found, try next
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota')) {
+      const msg = String(err?.message || err || '')
+      // Extract suggested model name from API error message, e.g. "use models/gemini-3.8-flash"
+      const suggestedMatch = msg.match(/use (?:models\/)?([a-z0-9.\-]+flash[a-z0-9.\-]*)/i)
+      if (suggestedMatch) {
+        const suggested = suggestedMatch[1]
+        if (!MODELS.includes(suggested)) {
+          MODELS.splice(MODELS.indexOf(modelName) + 1, 0, suggested)
+        }
+      }
+      // Model deprecated/not found/quota — try next
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota') ||
+          msg.includes('no longer available') || msg.includes('deprecated')) {
+        console.warn(`Gemini [${modelName}] unavailable, trying next model`)
         continue
       }
-      // Auth error — key is invalid/expired; fall through to fallback
+      // Auth or hard error — stop
       console.error(`Gemini [${modelName}] error:`, msg)
       break
     }
@@ -85,8 +97,14 @@ ${text.slice(0, 8000)}`
         return parsed
       }
     } catch (err: any) {
-      const msg = String(err?.message || '')
-      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota')) continue
+      const msg = String(err?.message || err || '')
+      const suggestedMatch = msg.match(/use (?:models\/)?([a-z0-9.\-]+flash[a-z0-9.\-]*)/i)
+      if (suggestedMatch) {
+        const suggested = suggestedMatch[1]
+        if (!MODELS.includes(suggested)) MODELS.splice(MODELS.indexOf(modelName) + 1, 0, suggested)
+      }
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota') ||
+          msg.includes('no longer available') || msg.includes('deprecated')) continue
       console.error(`Resume extraction [${modelName}] error:`, msg)
       break
     }
