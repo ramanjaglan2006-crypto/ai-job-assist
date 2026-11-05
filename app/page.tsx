@@ -1,14 +1,21 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
+import { useRouter } from 'next/navigation'
 import ChatWindow from '@/components/ChatWindow'
 import ResumeUploadModal from '@/components/ResumeUploadModal'
 import { Message, ParsedResume } from '@/lib/types'
 import { v4 as uuidv4 } from 'uuid'
-import { Bot, Upload, Briefcase, FileText, ChevronRight } from 'lucide-react'
+import { Upload, Briefcase, FileText, LayoutGrid } from 'lucide-react'
+import { useSession } from '@/hooks/useSession'
+import { useResume } from '@/hooks/useResume'
 
-export default function Home() {
+export default function ChatPage() {
+  const router = useRouter()
+  const sessionId = useSession()
+  const [parsedResume, setParsedResume] = useResume()
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -22,14 +29,12 @@ I'm your intelligent career companion. Here's what I can do for you:
 💬 **Refine with natural language** → "Show only remote roles" or "Jobs needing React"
 ✅ **Track applications** → Ask to apply and I'll record it; check your applications anytime
 
-**To get started, upload your resume using the button below, or type a message!**`,
+**To get started, upload your resume using the button above, or type a message!**`,
       timestamp: new Date().toISOString(),
     }
   ])
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId] = useState(() => uuidv4())
   const [showUpload, setShowUpload] = useState(false)
-  const [parsedResume, setParsedResume] = useState<ParsedResume | null>(null)
   const [inputValue, setInputValue] = useState('')
 
   const addMessage = useCallback((msg: Omit<Message, 'id' | 'timestamp'>) => {
@@ -37,11 +42,10 @@ I'm your intelligent career companion. Here's what I can do for you:
   }, [])
 
   const handleSend = async (text: string) => {
-    if (!text.trim() || isLoading) return
+    if (!text.trim() || isLoading || !sessionId) return
     setInputValue('')
     addMessage({ role: 'user', content: text })
     setIsLoading(true)
-
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -51,7 +55,7 @@ I'm your intelligent career companion. Here's what I can do for you:
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
       addMessage({ role: 'assistant', content: data.reply, jobCards: data.jobCards, applicationResult: data.applicationResult })
-    } catch (err) {
+    } catch {
       addMessage({ role: 'assistant', content: '⚠️ Sorry, I encountered an error. Please try again.' })
       toast.error('Request failed')
     } finally {
@@ -72,51 +76,39 @@ I'm your intelligent career companion. Here's what I can do for you:
   const quickActions = [
     { icon: <Briefcase size={14} />, label: 'Show my matched jobs', action: 'Show me jobs that match my profile' },
     { icon: <FileText size={14} />, label: 'Remote jobs only', action: 'Show only remote job opportunities' },
-    { icon: <ChevronRight size={14} />, label: 'My applications', action: 'Show my applied jobs and their status' },
+    { icon: <LayoutGrid size={14} />, label: 'My applications', action: 'Show my applied jobs and their status' },
   ]
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-200 px-4 py-3 flex items-center gap-3 shadow-sm">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-md">
-          <Bot size={22} className="text-white" />
-        </div>
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">AI Job Assistant</h1>
-          <p className="text-xs text-slate-500">Powered by Gemini AI · Hidani Tech Assessment</p>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
+    <div className="flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50"
+         style={{ height: 'calc(100vh - 56px)' }}>
+      {/* Chat sub-header */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200 px-4 py-2 flex items-center gap-3">
+        <div className="flex-1 flex items-center gap-2 overflow-x-auto">
           {parsedResume && (
-            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium">
-              ✓ Resume loaded
+            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium flex-shrink-0">
+              ✓ Resume: {parsedResume.name}
             </span>
           )}
-          <button
-            onClick={() => setShowUpload(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm"
-          >
-            <Upload size={16} />
-            {parsedResume ? 'Update Resume' : 'Upload Resume'}
-          </button>
-        </div>
-      </header>
-
-      {/* Quick actions bar */}
-      {parsedResume && (
-        <div className="bg-white/60 border-b border-slate-100 px-4 py-2 flex gap-2 overflow-x-auto">
-          {quickActions.map((qa, i) => (
+          {parsedResume && quickActions.map((qa, i) => (
             <button
               key={i}
               onClick={() => handleSend(qa.action)}
-              className="flex items-center gap-1.5 text-xs text-slate-600 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 px-3 py-1.5 rounded-full transition-colors whitespace-nowrap shadow-sm"
+              className="flex items-center gap-1.5 text-xs text-slate-600 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 px-3 py-1.5 rounded-full transition-colors whitespace-nowrap shadow-sm flex-shrink-0"
             >
               {qa.icon}
               {qa.label}
             </button>
           ))}
         </div>
-      )}
+        <button
+          onClick={() => setShowUpload(true)}
+          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm flex-shrink-0"
+        >
+          <Upload size={13} />
+          {parsedResume ? 'Update Resume' : 'Upload Resume'}
+        </button>
+      </div>
 
       {/* Chat */}
       <ChatWindow
