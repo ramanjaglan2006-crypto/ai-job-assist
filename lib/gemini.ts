@@ -1,61 +1,64 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+/**
+ * Gemini AI client — uses the new @google/genai SDK (v2+)
+ * Supports both legacy AIza... and new AQ. key formats from Google AI Studio.
+ * Keys are read from GEMINI_API_KEY env var (server-side only, never exposed to browser).
+ */
+import { GoogleGenAI } from '@google/genai'
 
 const API_KEY = process.env.GEMINI_API_KEY || ''
 
-let genAI: GoogleGenerativeAI | null = null
+// Supported models in priority order
+const MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
 
-function getClient() {
+let _client: GoogleGenAI | null = null
+
+function getClient(): GoogleGenAI | null {
   if (!API_KEY) return null
-  if (!genAI) genAI = new GoogleGenerativeAI(API_KEY)
-  return genAI
+  if (!_client) {
+    _client = new GoogleGenAI({ apiKey: API_KEY })
+  }
+  return _client
 }
 
 export async function generateText(prompt: string, systemPrompt?: string): Promise<string> {
   const client = getClient()
-  if (!client) {
-    // Graceful fallback: rule-based response
-    return fallbackResponse(prompt)
-  }
+  if (!client) return fallbackResponse(prompt)
 
-  try {
-    const model = client.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: systemPrompt,
-    })
-    const result = await model.generateContent(prompt)
-    return result.response.text()
-  } catch (err: any) {
-    console.error('Gemini error:', err?.message)
-    // Try with gemini-1.0-pro as fallback
+  const contents = systemPrompt
+    ? [{ role: 'user' as const, parts: [{ text: `${systemPrompt}\n\n${prompt}` }] }]
+    : [{ role: 'user' as const, parts: [{ text: prompt }] }]
+
+  for (const modelName of MODELS) {
     try {
-      const model = client.getGenerativeModel({ model: 'gemini-pro' })
-      const result = await model.generateContent(prompt)
-      return result.response.text()
-    } catch {
-      return fallbackResponse(prompt)
+      const response = await client.models.generateContent({
+        model: modelName,
+        contents,
+      })
+      const text = response.text ?? ''
+      if (text) return text
+    } catch (err: any) {
+      const msg = String(err?.message || '')
+      // If quota / model not found, try next
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota')) {
+        continue
+      }
+      // Auth error — key is invalid/expired; fall through to fallback
+      console.error(`Gemini [${modelName}] error:`, msg)
+      break
     }
   }
-}
 
-function fallbackResponse(prompt: string): string {
-  const lower = prompt.toLowerCase()
-  if (lower.includes('apply') || lower.includes('application')) {
-    return 'I have recorded your application. Please note this is a simulation — no real application is submitted.'
-  }
-  if (lower.includes('skill') || lower.includes('job') || lower.includes('match')) {
-    return 'Based on your profile, I found several matching jobs. Please configure GEMINI_API_KEY for detailed AI-powered matching.'
-  }
-  return 'I understand your request. Please configure the GEMINI_API_KEY environment variable for full AI-powered responses.'
+  return fallbackResponse(prompt)
 }
 
 export async function extractResumeData(text: string): Promise<Record<string, any>> {
-  const prompt = `Extract structured data from this resume text. Return ONLY valid JSON with these fields:
+  const prompt = `Extract structured data from this resume text. Return ONLY valid JSON with these exact fields:
 {
   "name": "Full Name",
   "email": "email@example.com or null",
   "phone": "phone number or null",
   "designation": "current/target job title",
-  "skills": ["skill1", "skill2", ...],
+  "skills": ["skill1", "skill2"],
   "experience": "X years",
   "experienceYears": 0,
   "education": ["Degree from University, Year"],
@@ -69,92 +72,126 @@ ${text.slice(0, 8000)}`
   const client = getClient()
   if (!client) return extractBasicData(text)
 
-  try {
-    const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' })
-    const result = await model.generateContent(prompt)
-    const responseText = result.response.text()
-    // Extract JSON from response
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0])
+  for (const modelName of MODELS) {
+    try {
+      const response = await client.models.generateContent({
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      })
+      const responseText = response.text ?? ''
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        return parsed
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || '')
+      if (msg.includes('not found') || msg.includes('404') || msg.includes('quota')) continue
+      console.error(`Resume extraction [${modelName}] error:`, msg)
+      break
     }
-    return extractBasicData(text)
-  } catch {
-    return extractBasicData(text)
   }
+
+  return extractBasicData(text)
 }
 
-function extractBasicData(text: string): Record<string, any> {
-  // Rule-based extraction fallback
+// ─── Fallback: rule-based responses when Gemini is unavailable ───────────────
+
+function fallbackResponse(prompt: string): string {
+  const lower = prompt.toLowerCase()
+  if (lower.includes('apply') || lower.includes('application')) {
+    return 'I have recorded your application. Please note this is a simulation — no real application is submitted to the employer.'
+  }
+  if (lower.includes('skill') || lower.includes('job') || lower.includes('match')) {
+    return 'Based on your profile, I found several matching jobs. Upload your resume to get AI-powered personalized recommendations.'
+  }
+  return "I understand your request. I'm currently running in rule-based mode. Upload your resume to find matching jobs, or ask me to show your applications."
+}
+
+export function extractBasicData(text: string): Record<string, any> {
   const emailMatch = text.match(/[\w.+-]+@[\w-]+\.\w+/)
   const phoneMatch = text.match(/[\+]?[\d\s\-\(\)]{10,15}/)
   const lines = text.split('\n').filter(l => l.trim())
   const name = lines[0]?.trim() || 'Unknown'
 
-  const skillKeywords = ['javascript', 'typescript', 'python', 'react', 'node', 'java', 'c++', 'sql',
-    'html', 'css', 'git', 'docker', 'kubernetes', 'aws', 'mongodb', 'postgresql', 'redis',
-    'next.js', 'vue', 'angular', 'express', 'django', 'flask', 'spring', 'graphql', 'rest']
+  // ── Skills detection ──
+  const skillKeywords = [
+    'javascript', 'typescript', 'python', 'react', 'node', 'java', 'c++', 'sql',
+    'html', 'css', 'git', 'docker', 'kubernetes', 'aws', 'mongodb', 'postgresql',
+    'redis', 'next.js', 'vue', 'angular', 'express', 'django', 'flask', 'spring',
+    'graphql', 'rest', 'golang', 'rust', 'swift', 'kotlin', 'flutter', 'pytorch',
+    'tensorflow', 'machine learning', 'deep learning', 'nlp',
+  ]
   const foundSkills = skillKeywords.filter(skill => text.toLowerCase().includes(skill))
 
-  // --- Education extraction ---
+  // ── Education detection (section-based) ──
   const education: string[] = []
-  // Look for Education section header and grab lines after it
-  const eduSectionMatch = text.match(
-    /(?:education|academic|qualification)[s]?\s*[\n:]([\s\S]*?)(?=\n\s*(?:experience|skills|projects?|work|employment|certifi|achievement|extra|activity|interest|reference|$))/i
-  )
-  if (eduSectionMatch) {
-    const eduLines = eduSectionMatch[1]
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l.length > 3 && !/^[-•*|]+$/.test(l))
-    education.push(...eduLines.slice(0, 5))
+  const eduKeywords = ['bachelor', 'master', 'b.tech', 'm.tech', 'b.e.', 'm.e.', 'bsc', 'msc',
+    'phd', 'diploma', 'b.sc', 'm.sc', 'engineering', 'university', 'college', 'institute']
+  const eduSectionPattern = /(?:education|academic|qualification)/i
+  const textLower = text.toLowerCase()
+  
+  if (eduSectionPattern.test(textLower)) {
+    const eduIdx = textLower.search(eduSectionPattern)
+    const eduSection = text.slice(eduIdx, eduIdx + 800)
+    const eduLines = eduSection.split('\n').filter(l => l.trim().length > 5)
+    for (const line of eduLines.slice(1, 6)) {
+      const lineLower = line.toLowerCase()
+      if (eduKeywords.some(kw => lineLower.includes(kw))) {
+        education.push(line.trim())
+      }
+      if (education.length >= 3) break
+    }
   }
-  // Also sweep entire text for degree keywords in case section not found
+
+  // Fallback: keyword sweep across all lines
   if (education.length === 0) {
-    const degreeRegex = /(?:b\.?\s*tech|b\.?\s*e\.?|m\.?\s*tech|b\.?\s*sc|m\.?\s*sc|mba|ph\.?\s*d|bachelor|master|diploma|b\.?\s*com|b\.?\s*ca|12th|10th|hsc|ssc)[^\n]*/gi
-    const degreeMatches = text.match(degreeRegex)
-    if (degreeMatches) education.push(...degreeMatches.slice(0, 3).map(s => s.trim()))
+    for (const line of lines) {
+      const lineLower = line.toLowerCase()
+      if (eduKeywords.some(kw => lineLower.includes(kw)) && line.length > 10) {
+        education.push(line.trim())
+        if (education.length >= 3) break
+      }
+    }
   }
 
-  // --- Projects extraction ---
+  // ── Projects detection (section-based) ──
   const projects: string[] = []
-  const projSectionMatch = text.match(
-    /(?:projects?|personal projects?|academic projects?|work done)[s]?\s*[\n:]([\s\S]*?)(?=\n\s*(?:education|academic|skills|experience|work|employment|certifi|achievement|extra|activity|interest|reference|$))/i
-  )
-  if (projSectionMatch) {
-    const projLines = projSectionMatch[1]
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l.length > 5 && !/^[-•*|]+$/.test(l))
-    // Group into project entries — take up to 4 lines
-    projects.push(...projLines.slice(0, 4))
+  const projSectionPattern = /(?:project|work experience|portfolio|personal work)/i
+  
+  if (projSectionPattern.test(textLower)) {
+    const projIdx = textLower.search(projSectionPattern)
+    const projSection = text.slice(projIdx, projIdx + 1200)
+    const projLines = projSection.split('\n').filter(l => l.trim().length > 10)
+    for (const line of projLines.slice(1, 8)) {
+      const lineLower = line.toLowerCase()
+      // Skip section headers and generic lines
+      if (projSectionPattern.test(lineLower)) continue
+      if (line.trim().length > 15 && !lineLower.startsWith('•') && !lineLower.startsWith('-')) {
+        projects.push(line.trim().slice(0, 100))
+        if (projects.length >= 4) break
+      } else if ((line.startsWith('•') || line.startsWith('-')) && line.length > 20) {
+        projects.push(line.trim().slice(0, 100))
+        if (projects.length >= 4) break
+      }
+    }
   }
 
-  // --- Experience years ---
-  let experienceYears = 0
-  const expYearsMatch = text.match(/(\d+)\+?\s*years?\s*(?:of\s*)?(?:experience|exp)/i)
-  if (expYearsMatch) experienceYears = parseInt(expYearsMatch[1])
-
-  // --- Designation ---
-  const titleKeywords = ['software engineer', 'software developer', 'frontend', 'backend', 'full stack',
-    'fullstack', 'web developer', 'data scientist', 'ml engineer', 'devops', 'cloud engineer',
-    'mobile developer', 'react developer', 'node developer', 'python developer']
-  const lowerText = text.toLowerCase()
-  const detectedTitle = titleKeywords.find(t => lowerText.includes(t))
+  // ── Experience years ──
+  const expMatch = text.match(/(\d+)\s*(?:\+\s*)?years?\s+(?:of\s+)?(?:experience|exp)/i)
+  const experienceYears = expMatch ? parseInt(expMatch[1]) : 0
+  const experience = experienceYears > 0 ? `${experienceYears} years` : '0-2 years'
 
   return {
     name,
     email: emailMatch?.[0] || null,
     phone: phoneMatch?.[0]?.trim() || null,
-    designation: detectedTitle
-      ? detectedTitle.replace(/\b\w/g, c => c.toUpperCase())
-      : 'Software Developer',
+    designation: 'Software Developer',
     skills: foundSkills.length ? foundSkills : ['JavaScript', 'React', 'Node.js'],
-    experience: experienceYears > 0 ? `${experienceYears} years` : '0-2 years',
+    experience,
     experienceYears,
     education,
     projects,
-    summary: `Candidate with skills in ${foundSkills.slice(0, 3).join(', ')}.`,
+    summary: `Candidate with skills in ${foundSkills.slice(0, 3).join(', ') || 'software development'}.`,
   }
 }
-

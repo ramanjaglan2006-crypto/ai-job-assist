@@ -31,3 +31,4 @@ export function useResume(): [ParsedResume | null, (r: ParsedResume | null) => v
 
   return [resume, setResume]
 }
+

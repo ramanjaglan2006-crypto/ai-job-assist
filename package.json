@@ -10,7 +10,7 @@
     "scrape": "python3 scripts/scraper.py"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
+    "@google/genai": "^2.32.0",
     "ai": "^4.0.0",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",

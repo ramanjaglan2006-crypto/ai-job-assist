@@ -119,7 +119,33 @@ I'm your intelligent career companion. Here's what I can do for you:
         setInputValue={setInputValue}
         sessionId={sessionId}
         onApply={async (jobId, jobTitle) => {
-          await handleSend(`Apply me to job: ${jobId} (${jobTitle})`)
+          // Directly call /api/applications — avoids text-parsing through chat
+          if (!sessionId) return
+          addMessage({ role: 'user', content: `Apply me to job: ${jobId} (${jobTitle})` })
+          setIsLoading(true)
+          try {
+            const res = await fetch('/api/applications', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId, jobId }),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+              addMessage({ role: 'assistant', content: `⚠️ Could not record application: ${data.error || 'Unknown error'}` })
+            } else {
+              addMessage({
+                role: 'assistant',
+                content: data.success
+                  ? `✅ **Application recorded for "${data.application?.jobTitle}" at ${data.application?.company}.**\n\n📋 **Status:** ${data.application?.status}\n📅 **Date:** ${new Date(data.application?.appliedAt).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}\n\n> ⚠️ This is a demo — no real application has been sent to the employer.`
+                  : `ℹ️ ${data.message}`,
+              })
+            }
+          } catch {
+            addMessage({ role: 'assistant', content: '⚠️ Failed to record application. Please try again.' })
+            toast.error('Apply failed')
+          } finally {
+            setIsLoading(false)
+          }
         }}
       />
 

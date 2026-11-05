@@ -24,3 +24,4 @@ export function useSession(): string {
 
   return sessionId
 }
+
