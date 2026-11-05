@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { JobListing } from '@/lib/types'
-import { MapPin, Briefcase, ExternalLink, CheckCircle, Search, Wifi, SlidersHorizontal, ChevronDown, Loader2, AlertCircle } from 'lucide-react'
+import { MapPin, Briefcase, ExternalLink, CheckCircle, Search, Wifi, SlidersHorizontal, ChevronDown, Loader2, AlertCircle, RefreshCw, Radio } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { useSession } from '@/hooks/useSession'
 
@@ -23,13 +23,17 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
+  const [sources, setSources] = useState<string[]>([])
+  const [fromCache, setFromCache] = useState(false)
+  const [fetchedAt, setFetchedAt] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   // Applied tracking
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set())
   const [applyingId, setApplyingId] = useState<string | null>(null)
 
   // Fetch jobs
-  const fetchJobs = useCallback(async (p = 1, append = false) => {
+  const fetchJobs = useCallback(async (p = 1, append = false, forceRefresh = false) => {
     if (p === 1) setLoading(true)
     else setLoadingMore(true)
     setError('')
@@ -41,6 +45,7 @@ export default function JobsPage() {
       })
       if (remoteOnly) params.set('remote', 'true')
       if (skillFilter.trim()) params.set('skill', skillFilter.trim())
+      if (forceRefresh) params.set('refresh', 'true')
 
       const res = await fetch(`/api/jobs?${params}`)
       if (!res.ok) throw new Error('Failed to load jobs')
@@ -60,11 +65,15 @@ export default function JobsPage() {
       setJobs(prev => append ? [...prev, ...filtered] : filtered)
       setTotal(data.total)
       setPage(p)
+      setSources(data.sources || [])
+      setFromCache(data.fromCache || false)
+      setFetchedAt(data.fetchedAt || '')
     } catch (err: any) {
       setError(err.message || 'Something went wrong')
     } finally {
       setLoading(false)
       setLoadingMore(false)
+      setRefreshing(false)
     }
   }, [remoteOnly, skillFilter, search])
 
@@ -90,6 +99,13 @@ export default function JobsPage() {
       })
       .catch(() => {})
   }, [sessionId])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    toast('Fetching fresh listings…', { icon: '🔄' })
+    await fetchJobs(1, false, true)
+    toast.success('Listings refreshed!')
+  }
 
   const handleApply = async (job: JobListing) => {
     if (!sessionId) return
@@ -122,8 +138,34 @@ export default function JobsPage() {
       {/* Page header */}
       <div className="bg-white border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 py-6">
-          <h1 className="text-2xl font-bold text-slate-900">Browse Jobs</h1>
-          <p className="text-sm text-slate-500 mt-1">{total.toLocaleString()} real job listings · Apply records the job in this demo only</p>
+          <div className="flex items-center justify-between gap-4 mb-1">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Browse Live Jobs</h1>
+              <p className="text-sm text-slate-500 mt-0.5">
+                {total.toLocaleString()} real job listings · Apply records the job in this demo only
+              </p>
+            </div>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || loading}
+              className="flex items-center gap-2 text-sm text-indigo-600 border border-indigo-200 hover:border-indigo-400 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg transition-all font-medium disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          {/* Live source badge */}
+          {sources.length > 0 && !fromCache && (
+            <div className="flex items-center gap-1.5 text-xs text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-full w-fit mt-2">
+              <Radio size={11} className="text-green-500 animate-pulse" />
+              <span className="font-medium">Live data</span>
+              <span className="text-green-600">· {sources.join(' · ')}</span>
+            </div>
+          )}
+          {fromCache && (
+            <div className="text-xs text-slate-400 mt-2">📦 Serving cached listings (refreshes every 10 min)</div>
+          )}
 
           {/* Filters */}
           <div className="mt-4 flex flex-wrap gap-3">
@@ -229,7 +271,7 @@ export default function JobsPage() {
                   </div>
 
                   {/* Meta */}
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2">
                     <span className="flex items-center gap-1 text-xs text-slate-500">
                       <MapPin size={11} />
                       {job.remote ? 'Remote' : job.location}
@@ -244,6 +286,11 @@ export default function JobsPage() {
                       <span className="text-xs text-green-600 font-medium">{job.salary}</span>
                     )}
                   </div>
+
+                  {/* Source badge */}
+                  {job.source && (
+                    <span className="text-xs text-slate-400 mb-2">📡 {job.source}</span>
+                  )}
 
                   {/* Skills */}
                   {job.skills && job.skills.length > 0 && (

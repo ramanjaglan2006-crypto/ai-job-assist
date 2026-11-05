@@ -1,6 +1,6 @@
 import { ParsedResume, JobCard, ApplicationResult, ChatRequest, ChatResponse } from '../types'
 import { generateText } from '../gemini'
-import { getTopMatches, filterJobs, loadJobs, scoreJob } from '../jobMatcher'
+import { getTopMatchesAsync, filterJobs, loadJobsAsync, scoreJob } from '../jobMatcher'
 import { getApplications, addApplication } from '../applicationStore'
 import { format } from 'date-fns'
 
@@ -64,7 +64,7 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     const titleFromParens = message.match(/\(([^)]+)\)/)?.[1]
     const titleFromText = message.replace(/apply\s+(me\s+to|to)\s+/i, '').replace(/job[:\s]+\S+/i, '').trim()
 
-    const jobs = loadJobs()
+    const jobs = await loadJobsAsync()
     let job = jobId ? jobs.find(j => j.id.toUpperCase() === jobId) : null
 
     // Fallback: search by title if no ID found or no job found by ID
@@ -114,7 +114,7 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
     }
 
     const filters = intent === 'refine_jobs' ? parseFilters(message) : {}
-    const matches = getTopMatches(resume, 8, Object.keys(filters).length > 0 ? filters : undefined)
+    const matches = await getTopMatchesAsync(resume, 8, Object.keys(filters).length > 0 ? filters : undefined)
 
     if (matches.length === 0) {
       return {
@@ -128,7 +128,7 @@ export async function handleChat(req: ChatRequest): Promise<ChatResponse> {
       : `Here are your top job matches based on your profile:`
 
     return {
-      reply: `## 🎯 ${intro}\n\nI found **${matches.length} jobs** matching your profile. See the job cards below for details and match reasons.`,
+      reply: `## 🎯 ${intro}\n\nI found **${matches.length} live jobs** matching your profile. See the job cards below for details and match reasons.`,
       jobCards: matches,
     }
   }

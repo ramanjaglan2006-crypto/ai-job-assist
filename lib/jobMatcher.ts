@@ -1,22 +1,29 @@
 import { JobListing, JobCard, ParsedResume } from './types'
 import { generateText } from './gemini'
+import { fetchLiveJobs } from './liveJobsFetcher'
 import path from 'path'
 import fs from 'fs'
 
-let cachedJobs: JobListing[] | null = null
-
+/** Synchronous static-file loader (used as quick fallback inside orchestrator) */
 export function loadJobs(): JobListing[] {
-  if (cachedJobs) return cachedJobs
   try {
     const dataPath = path.join(process.cwd(), 'data', 'jobs.json')
     const raw = fs.readFileSync(dataPath, 'utf-8')
     const jobs = JSON.parse(raw)
-    cachedJobs = Array.isArray(jobs) ? jobs : (jobs.jobs || [])
-    return cachedJobs!
+    return Array.isArray(jobs) ? jobs : (jobs.jobs || [])
   } catch (err) {
-    console.error('Failed to load jobs:', err)
+    console.error('Failed to load static jobs:', err)
     return []
   }
+}
+
+/** Async loader that prefers live data, falls back to static */
+export async function loadJobsAsync(): Promise<JobListing[]> {
+  try {
+    const { jobs } = await fetchLiveJobs()
+    if (jobs.length > 0) return jobs
+  } catch {}
+  return loadJobs()
 }
 
 export function filterJobs(jobs: JobListing[], filters: {
@@ -105,6 +112,24 @@ export function scoreJob(job: JobListing, resume: ParsedResume): { score: number
 export function getTopMatches(resume: ParsedResume, limit = 10, filters?: Record<string, any>): JobCard[] {
   let jobs = loadJobs()
   
+  if (filters) {
+    jobs = filterJobs(jobs, filters)
+  }
+
+  const scored = jobs.map(job => {
+    const { score, reasons } = scoreJob(job, resume)
+    return { job, matchScore: score, matchReasons: reasons }
+  })
+
+  return scored
+    .sort((a, b) => b.matchScore - a.matchScore)
+    .slice(0, limit)
+}
+
+/** Async version — uses live jobs (recommended for chat) */
+export async function getTopMatchesAsync(resume: ParsedResume, limit = 10, filters?: Record<string, any>): Promise<JobCard[]> {
+  let jobs = await loadJobsAsync()
+
   if (filters) {
     jobs = filterJobs(jobs, filters)
   }
