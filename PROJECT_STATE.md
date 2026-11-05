@@ -1,140 +1,89 @@
-# PROJECT_STATE.md — Hidani Tech AI Job Chat Assistant
+# Hidani Tech AI Job Assistant — Project State
 
-## Project Goal
-Conversational AI job assistant for Hidani Tech SDE Intern assessment. Upload resume → extracted profile → job recommendations with match reasons → natural-language refinement → record applications → check status.
+## Live URL
+https://hidani-job-assistant.vercel.app
 
-## Assessment Requirements
-- [x] 1500–2000 real job listings in data/jobs.json (**2,674 verified**)
-- [x] Scraper/ingestion script included (scripts/scraper.py)
-- [x] Conversational chat interface (not a static form)
-- [x] Agent-based design (Orchestrator → Resume/JobMatch/Application agents)
-- [x] LLM provider: Google Gemini 1.5 Flash (rule-based fallback when no key)
-- [x] Resume upload: PDF + DOCX
-- [x] Profile extraction: name, contact, designation, skills, experience, education, projects
-- [x] Job recommendations with specific match reasons + scores
-- [x] Natural language refinement ("remote only", "needs React", "senior roles")
-- [x] Apply intent → record application (no real submission, clearly stated)
-- [x] Application status/history view with date and status
-- [x] Duplicate application prevention
-- [x] No auth required (session UUID per browser tab)
-- [x] .env.example with variable names only
-- [x] README: setup, architecture, dataflow, APIs, dataset, limitations
-- [x] PROJECT_STATE.md maintained
-- [x] Demo recording plan in README
-- [ ] Live deployment link (Vercel — push your GEMINI_API_KEY)
+## GitHub
+https://github.com/ramanjaglan2006-crypto/ai-job-assist
 
-## Current Phase
-**Phase 3: Complete ✅** — Date: 2026-11-04
+## Vercel Project
+`ramanjaglan2006-cryptos-projects/hidani-job-assistant`
 
-## Stack
-- **Framework:** Next.js 14 (App Router) + TypeScript + Tailwind CSS 3
-- **AI:** Google Gemini 1.5 Flash (lib/gemini.ts) with rule-based fallback
-- **Resume parsing:** pdf-parse (PDF) + mammoth (DOCX) + Gemini extraction
-- **Storage:** JSON files — data/jobs.json (2,674 listings), data/sessions/<id>.json (applications)
-- **No database, no auth required**
+---
 
-## Key Design Decisions
-- File-based session storage (UUID v4 per browser session) → zero-config deployment
-- Orchestrator detects intent (show_jobs, refine_jobs, apply_job, show_applications, general)
-- Job scoring: skill overlap (60pts) + title match (20pts) + experience level (10pts)
-- Resume treated as untrusted input (prompt injection stripped before LLM)
-- Graceful fallback: fully functional without GEMINI_API_KEY (keyword matching)
-- Job IDs are deterministic MD5 hashes (JOB + 8 hex chars), stable across scraper runs
+## Current State: DEPLOYED ✅
 
-## Completed Deliverables
-- [x] app/page.tsx — Chat UI with header, quick actions, upload trigger
-- [x] app/api/chat/route.ts — Orchestrator endpoint
-- [x] app/api/upload/route.ts — Resume parser endpoint
-- [x] app/api/jobs/route.ts — Job listings with pagination + filter
-- [x] app/api/applications/route.ts — Application CRUD
-- [x] lib/gemini.ts — Gemini API + fallback
-- [x] lib/resumeParser.ts — PDF/DOCX extraction
-- [x] lib/jobMatcher.ts — Scoring + filtering engine
-- [x] lib/applicationStore.ts — Session-based storage with dedup
-- [x] lib/agents/orchestrator.ts — Intent detection + routing
-- [x] components/ChatWindow.tsx + ChatInput.tsx + MessageBubble.tsx
-- [x] components/JobCard.tsx — Match score, reasons, apply button, external link
-- [x] components/ResumeUploadModal.tsx — Drag-drop with progress
-- [x] data/jobs.json — 2,674 real job listings
-- [x] scripts/scraper.py — 4 public APIs (Remotive, RemoteOK, The Muse, Arbeitnow)
-- [x] scripts/supplement_jobs.py — Synthetic job generator
-- [x] .env.example, .gitignore, Dockerfile, README.md
+### Pages
+| Page | Route | Description |
+|------|-------|-------------|
+| Chat | `/` | AI chatbot, resume upload, job recommendations |
+| Jobs | `/jobs` | Browse, search, filter 2,674 real jobs |
+| My Applications | `/applications` | Application dashboard with status badges |
 
-## Commands
+### Navigation
+- Shared `AppNav` header on all pages (Chat / Jobs / My Applications)
+- Active page highlighted
+- Mobile hamburger menu
 
-### Local Development
-```bash
-cd "/Users/raman/Desktop/ai job ast"
-npm install
-npm run dev        # → http://localhost:3001
-```
+### Session Sharing
+- `useSession` hook: persists session ID in `localStorage` key `hidani_session_id`
+- `useResume` hook: persists parsed resume in `sessionStorage` key `hidani_parsed_resume`
+- Same session ID used across all three pages
 
-### Production Build Test
-```bash
-npm run build      # ✅ Passes (confirmed 2026-11-04)
-npm run start
-```
+---
 
-### Dataset Verification
-```bash
-python3 -c "import json; d=json.load(open('data/jobs.json')); print(len(d))"
-# Output: 2674
-```
+## Changes — Latest Commit `ad9ecad`
 
-### Re-scrape (optional)
-```bash
-python3 scripts/scraper.py        # Scrape fresh jobs from 4 APIs
-python3 scripts/supplement_jobs.py # Supplement to 1700+ if needed
-```
+### 1. Gemini SDK Migration
+- **Removed**: `@google/generative-ai` (old SDK, did not reliably support `AQ.` keys)
+- **Added**: `@google/genai` v2.32.0 (new official SDK, supports both `AQ.` and legacy `AIza...` keys)
+- **Updated**: `lib/gemini.ts` — rewrote to use `GoogleGenAI` from `@google/genai`
+  - Model priority: `gemini-2.0-flash` → `gemini-1.5-flash` → `gemini-1.5-pro`
+  - Graceful fallback for quota/404/auth errors
+  - API key read from `GEMINI_API_KEY` env var (server-side only, never exposed to browser)
 
-### Deploy
-```bash
-# Option 1: Vercel
-vercel --prod
-# → Set GEMINI_API_KEY in Vercel env vars
+### 2. Apply Error Fix
+- **Problem**: Clicking "Apply (Record)" on a job card routed through the chat API, which parsed text with regex. This caused 500 errors when job ID extraction failed.
+- **Fix**: `app/page.tsx` `onApply` callback now calls `/api/applications` directly (POST with `sessionId` + `jobId`), then shows the result as an assistant message in chat.
+- Jobs page already called `/api/applications` directly — no change needed there.
 
-# Option 2: Railway/Render
-# Connect GitHub repo, set GEMINI_API_KEY env var
-```
+### 3. Education & Projects Parsing
+- Enhanced `extractBasicData` fallback in `lib/gemini.ts` with section-based detection
+- Finds Education/Academic sections, degree keywords, and Project sections
+
+---
+
+## Changes — Commit `23ae683`
+
+### Multi-page Layout
+- Added `components/AppNav.tsx` — sticky header nav
+- Added `app/jobs/page.tsx` — Jobs browse page (search, filter, 12-per-page, Load More, Apply)
+- Added `app/applications/page.tsx` — Applications dashboard
+- Added `hooks/useSession.ts` — localStorage session sharing
+- Added `hooks/useResume.ts` — sessionStorage resume sharing
+- Modified `app/layout.tsx` — AppNav added globally
+- Modified `app/page.tsx` — refactored to use shared hooks
+
+---
 
 ## Environment Variables
-```
-GEMINI_API_KEY=   # Google Gemini API key (aistudio.google.com - free tier)
-NODE_ENV=         # development or production
-```
-Never commit values. See .env.example.
 
-## Dataset
-- **Verified Count:** 2,674 jobs (target was 1,500–2,000)
-- **Sources:**
-  - Arbeitnow API: 2,341 jobs (public, no auth)
-  - The Muse API: 223 jobs (public, no auth)
-  - RemoteOK API: 99 jobs (public, no auth)
-  - Remotive API: 11 jobs (public, no auth)
-- **Scraper:** python3 scripts/scraper.py (stdlib only, no pip install)
-- **Rate limit handling:** 1-2s sleep between pages, exponential backoff on 429
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `GEMINI_API_KEY` | Optional | Supports `AQ.` (new AI Studio) and `AIza...` (legacy) formats. App fully works without it via rule-based fallback. Set in Vercel project settings. |
 
-## Verification Performed (2026-11-04)
-- [x] npm run build passes (TypeScript, no errors)
-- [x] /api/jobs returns 2,674 total
-- [x] Job recommendations with match scores (70% top match for React dev profile)
-- [x] Match reasons generated (skill overlap, experience level, role alignment)
-- [x] Remote filter works (8/8 cards remote when filtered)
-- [x] Apply by JOB ID records application successfully
-- [x] Application stored in data/sessions/<id>.json
-- [x] "Show my applications" lists with date and status
-- [x] Duplicate apply correctly blocked (success=False, clear message)
-- [x] Rule-based fallback works without GEMINI_API_KEY
+> **Never** store the API key in `.env.local` and commit to git. `.env.local` is in `.gitignore`.
 
-## Paths
-- Project: /Users/raman/Desktop/ai job ast/
-- Jobs dataset: /Users/raman/Desktop/ai job ast/data/jobs.json
-- Sessions: /Users/raman/Desktop/ai job ast/data/sessions/
-- GitHub: https://github.com/ramanjaglan2006-crypto/ai-job-assist
-- Live: Deploy via Vercel (import the GitHub repo)
+---
+
+## Known Limitations
+- Vercel serverless `/tmp` is ephemeral — session data (applied jobs) resets on cold starts / redeploys
+- For persistent session storage across deploys, a database (e.g. Redis, Vercel KV) would be needed
+- Gemini API key on Vercel needs to be a valid key — check format starts with `AQ.` or `AIza` from https://aistudio.google.com/apikey
+
+---
 
 ## Next Action
-1. Add your GEMINI_API_KEY to .env.local for full AI responses
-2. Deploy to Vercel: `vercel --prod` and set GEMINI_API_KEY env var
-3. Verify live URL works for the full user flow
-4. Record 3-5 min demo (see recording plan in README)
+- Verify live deploy at https://hidani-job-assistant.vercel.app
+- Test: upload resume → get recommendations → apply to a job → check My Applications page
+- If Gemini API key is invalid, generate a new one at https://aistudio.google.com/apikey and update in Vercel: Settings → Environment Variables → GEMINI_API_KEY
