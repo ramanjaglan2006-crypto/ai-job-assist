@@ -2,50 +2,65 @@ import { NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
 
-// Temporary debug endpoint — reveals only key presence and prefix, never the full key
+// Debug endpoint — tests key presence and ONE live API call per source
+// Use sparingly: only 25 JSearch calls available
 export async function GET() {
-  const key = process.env.GEMINI_API_KEY || ''
-  const present = key.length > 10
-  const prefix = present ? key.slice(0, 6) + '...' : '(empty)'
+  const results: Record<string, any> = {}
 
-  if (!present) {
-    return NextResponse.json({ status: 'missing', message: 'GEMINI_API_KEY is not set or empty' })
-  }
-
-  // Try a real Gemini API call
-  try {
-    const { GoogleGenAI } = await import('@google/genai')
-    const ai = new GoogleGenAI({ apiKey: key })
-    const models = ['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash']
-    let text = ''
-    let usedModel = ''
-    for (const model of models) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [{ role: 'user', parts: [{ text: 'Reply with exactly the word: WORKING' }] }],
-        })
-        text = response.text?.trim() || ''
-        usedModel = model
-        if (text) break
-      } catch (e: any) {
-        if (e?.message?.includes('not found') || e?.message?.includes('404') || e?.message?.includes('no longer available')) continue
-        throw e
+  // ── Adzuna ──────────────────────────────────────────────────────────────────
+  const adzunaId  = process.env.ADZUNA_APP_ID  || ''
+  const adzunaKey = process.env.ADZUNA_APP_KEY || ''
+  results.adzuna = { keyPresent: !!(adzunaId && adzunaKey), prefix: adzunaId.slice(0, 4) + '...' }
+  if (adzunaId && adzunaKey) {
+    try {
+      const url = `https://api.adzuna.com/v1/api/jobs/in/search/1?app_id=${adzunaId}&app_key=${adzunaKey}&results_per_page=3&what=software+developer&content-type=application/json`
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+      const data = await res.json()
+      if (data.results?.length) {
+        results.adzuna.status = '✅ Working'
+        results.adzuna.count  = data.__CLASS__ ? data.count : data.results.length
+        results.adzuna.sample = `${data.results[0].title} @ ${data.results[0].company?.display_name}`
+      } else {
+        results.adzuna.status = '⚠️ No results'
+        results.adzuna.raw    = JSON.stringify(data).slice(0, 200)
       }
+    } catch (e: any) {
+      results.adzuna.status = '❌ Error: ' + e.message
     }
-    return NextResponse.json({
-      status: 'ok',
-      keyPrefix: prefix,
-      modelUsed: usedModel,
-      geminiResponse: text,
-      geminiActive: text.includes('WORKING'),
-    })
-  } catch (err: any) {
-    return NextResponse.json({
-      status: 'error',
-      keyPrefix: prefix,
-      error: err?.message || String(err),
-    })
   }
-}
 
+  // ── JSearch ──────────────────────────────────────────────────────────────────
+  const jsearchKey = process.env.JSEARCH_API_KEY || ''
+  results.jsearch = { keyPresent: !!jsearchKey, prefix: jsearchKey.slice(0, 8) + '...' }
+  if (jsearchKey) {
+    try {
+      const res = await fetch(
+        'https://jsearch.p.rapidapi.com/search?query=software+developer+india&page=1&num_pages=1',
+        {
+          headers: {
+            'X-RapidAPI-Key':  jsearchKey,
+            'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
+          },
+          signal: AbortSignal.timeout(10000),
+        }
+      )
+      const data = await res.json()
+      if (data.data?.length) {
+        results.jsearch.status = '✅ Working'
+        results.jsearch.count  = data.data.length
+        results.jsearch.sample = `${data.data[0].job_title} @ ${data.data[0].employer_name}`
+      } else {
+        results.jsearch.status = '⚠️ No results'
+        results.jsearch.raw    = JSON.stringify(data).slice(0, 200)
+      }
+    } catch (e: any) {
+      results.jsearch.status = '❌ Error: ' + e.message
+    }
+  }
+
+  // ── Gemini ───────────────────────────────────────────────────────────────────
+  const geminiKey = process.env.GEMINI_API_KEY || ''
+  results.gemini = { keyPresent: !!geminiKey, prefix: geminiKey.slice(0, 6) + '...' }
+
+  return NextResponse.json(results, { status: 200 })
+}
